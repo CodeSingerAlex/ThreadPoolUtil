@@ -5,7 +5,7 @@
 
 example:
 
-创建一个新的源文件，以`test.cpp`为例，你可以取任何你喜欢的名字。
+创建一个新的源文件，以为例0-65535的递增数列计算为例。
 
 ```cpp
 # include "threadpool.hpp"
@@ -45,10 +45,10 @@ int main() {
     * Result::submitTask(shared_ptr<Task>());
     * 使用Result接收任意类型返回值
     */
-    Result res1 = pool.submitTask(make_shared<MyTask>(0, 100));
-    Result res2 = pool.submitTask(make_shared<MyTask>(101, 200));
-    Result res2 = pool.submitTask(make_shared<MyTask>(101, 200));
-    Result res2 = pool.submitTask(make_shared<MyTask>(101, 200));
+    Result res1 = pool.submitTask(make_shared<MyTask>(0, 16384));
+    Result res2 = pool.submitTask(make_shared<MyTask>(16385, 32768));
+    Result res2 = pool.submitTask(make_shared<MyTask>(32769, 49152));
+    Result res2 = pool.submitTask(make_shared<MyTask>(49153, 65535));
     /*
     * 使用Result::get().cast_<T>()进行类型转换
     */
@@ -57,7 +57,7 @@ int main() {
 ```
 
 ## 编译
-编译前确保编译器支持C++20，运行下面命令进行编译。其中`test.cpp`是
+编译前确保编译器支持C++20，运行下面命令进行编译。其中`test.cpp`是程序入口，换成你的文件名。
 
 ```shell
 g++ -std=c++2a test.cpp threadpool.cpp -o test -pthread
