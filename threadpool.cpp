@@ -7,7 +7,8 @@
 using namespace std;
 
 const int TASK_MAX_THREADPOOL = 1024;
-
+const int THREAD_MAX_THREADPOOL = 10;
+const int TIME_OUT = 60;
 /*
  * 默认线程池模式为固定大小
  * 初始化线程数量，任务数量、线程池阈值
@@ -18,6 +19,10 @@ ThreadPool::ThreadPool()
      ,taskSize(0)
      ,taskCapacity(TASK_MAX_THREADPOOL)
      ,poolMode(PoolMode::MODE_FIXED)
+     ,isRunning(false)
+     ,idleThreadSize(0)
+     ,threadCapacity(THREAD_MAX_THREADPOOL)
+     ,currentThreadSize(0) 
 {}
 
 ThreadPool::~ThreadPool() {
@@ -25,11 +30,20 @@ ThreadPool::~ThreadPool() {
 }
 
 void ThreadPool::setMode(PoolMode mode) {
-    poolMode = mode;
+    if(checkRunning()) {
+        poolMode = mode;
+    } else {
+        cerr << "ThreadPool is running, No setting!";
+    }
+    return;
 }
 
 void ThreadPool::setTaskCapacity(int capacity) {
     taskSize = capacity;
+}
+
+void ThreadPool::setThreadCapacity(int thread_capacity) {
+    threadCapacity =  thread_capacity;
 }
 
 /*
@@ -52,7 +66,10 @@ Result ThreadPool::submitTask(shared_ptr<Task> task) {
     * 等待锁与条件，条件满足则从等待状态->阻塞状态，拿到锁则从阻塞状态->允许状态
     * 超时返回
     */
-    notFull.wait_for(lock, chrono::seconds(1), [&]()->bool { return taskCapacity > taskSize; });
+    if(!notFull.wait_for(lock, chrono::seconds(1), [&]()->bool { return taskCapacity > taskSize; })) {
+        cerr << "Time out." << "\n";
+        return Result(task, false);
+    }
 
     /*
     * 放入任务
@@ -65,11 +82,29 @@ Result ThreadPool::submitTask(shared_ptr<Task> task) {
     */
     notEmpty.notify_all();
 
+    /*
+     * 每次放完任务判断一下当前线程是否过忙，过忙是添加新线程 
+    */
+    if(poolMode == PoolMode::MODE_CACHED
+        && taskSize > idleThreadSize
+        && currentThreadSize < threadCapacity) {
+            unique_ptr<Thread> thread_ptr = make_unique<Thread>(bind(&ThreadPool::threadFunc, this));
+            threads.emplace_back(move(thread_ptr));
+            cout << "new Thread" << endl;
+        }
+
+    return Result(task, true);
 }
 
 void ThreadPool::start(int size = 4) {
     initThreadSize = size; 
 
+    currentThreadSize = size;
+    /*
+    * 标记启动
+    */
+    isRunning = true;
+     
     for(int i = 0; i < initThreadSize; i++) {
         /*
         * C++14 make_unique<Thread>创建独占智能指针
@@ -97,10 +132,16 @@ void ThreadPool::start(int size = 4) {
     
     for(int i = 0; i < initThreadSize; i++) {
         threads[i]->begin();
+        idleThreadSize++;
     }
 }
 
 void ThreadPool::threadFunc() {
+    /*
+     * 记录上次线程执行任务的时间（此处为初始化）
+    */
+    auto lastTime = chrono::high_resolution_clock().now();
+
     for(;;) {
         shared_ptr<Task> task;
         /*
@@ -112,11 +153,33 @@ void ThreadPool::threadFunc() {
             */
             unique_lock<mutex> lock(taskqueMutex);
 
+            idleThreadSize--;
+
             /*
             * 等待条件变量
             * 被唤醒->获取锁->判断条件变量是否满足->继续执行
             */
-            notEmpty.wait(lock, [&]()->bool{ return taskSize > 0; });
+            if(poolMode == PoolMode::MODE_CACHED) {
+                /*
+                 * cached模式需要回收长期不执行任务的线程
+                */
+                while(taskSize > 0) {
+                    if(cv_status::timeout ==
+                        notEmpty.wait_for(lock, chrono::seconds(1))) {
+                            auto now = chrono::high_resolution_clock().now();
+                            auto dur = chrono::duration_cast<chrono::seconds>(now - lastTime);
+                            if(dur.count() >= TIME_OUT
+                                && currentThreadSize >= initThreadSize) {
+                                /*
+                                * 回收线程
+                                */
+                                
+                            }
+                        }
+                }
+            } else {
+                notEmpty.wait(lock, [&]()->bool{ return taskSize > 0; });
+            }
 
             /*
             * 条件满足消费任务
@@ -143,11 +206,22 @@ void ThreadPool::threadFunc() {
         if(task != nullptr) {
             task->exec();
         }
+
+        idleThreadSize++;
+
+        lastTime = chrono::high_resolution_clock().now();
     }
 }
 
+
+bool ThreadPool::checkRunning() const {
+    return isRunning;
+}
+
+int Thread::generateID = 0;
+
 Thread::Thread(ThreadFunc fc)
-    :func(fc)
+    :func(fc), threadID(generateID++)
 {}
 
 Thread::~Thread() {
@@ -183,10 +257,13 @@ void Thread::begin() {
     * 将线程对象和线程分离
     * 线程的运行独立于线程对象，线程对象的销毁不会影响程序的继续执行
     */
-    t.detach();x
+    t.detach();
 }
 
-Result::Result(shared_ptr<Task> task, bool isValid = true)
+int Thread::getId() const{
+    return threadID;
+}
+Result::Result(shared_ptr<Task> task, bool isValid)
     : task_(task), isValid_(isValid) {
         task_->setResult(this);
     }

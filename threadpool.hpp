@@ -57,7 +57,6 @@ private:
     class Derive : public Base {
     public: 
         Derive(T data) : data_(data) {}
-    private:
         T data_;
     };
 private:
@@ -117,34 +116,25 @@ public:
 
     ~Thread();
     void begin();
-private:
-    ThreadFunc func;
-};
-
-
-/*
-* Task携带Result指针对象在submitTask提交到任务队列
-* 任务被随机线程从队列取出，调用exec执行run并调用setAny将返回的Any赋给result，并用信号量通知完成赋值
-* 
-*/
-class Task {
-public:
-    Task();
-    ~Task();
 
     /*
-    * exec调用run但是比run做更多的事情，保持run的多态
+     * 获取线程ID  
     */
-    void exec();
-    virtual Any run() = 0;
-    void setResult(Result* res);
+    int getId() const;
 private:
-    Result* result;
+    ThreadFunc func;
+    static int fatherThreadId;
+    int threadID;
 };
+
+/*
+* 前置声明
+*/
+class Task;
 
 class Result {
 public:
-    Result(shared_ptr<Task> t, bool isValid = true);
+    Result(shared_ptr<Task> task, bool isValid = true);
     ~Result() = default;
 
     void setAny(Any any);
@@ -155,6 +145,27 @@ private:
     Semaphore sem;
     shared_ptr<Task> task_;
     bool isValid_;
+};
+
+/*
+* Task携带Result指针对象在submitTask提交到任务队列
+* 任务被随机线程从队列取出，调用exec执行run并调用setAny将返回的Any赋给result，并用信号量通知完成赋值
+* 
+*/
+class Task {
+public:
+    Task();
+    ~Task() = default;
+
+    /*
+    * exec调用run但是比run做更多的事情，保持run的多态
+    */
+    void exec();
+    virtual Any run() = 0;
+    void setResult(Result* res);
+
+private:
+    Result* result;
 };
 
 /*
@@ -183,6 +194,11 @@ public:
      * 设置任务队列阈值
      */
     void setTaskCapacity(int capacity);
+
+    /*
+    * 设置线程数量阈值
+    */
+    void setThreadCapacity(int thread_capacity); 
 
     /*
      * 提交任务
@@ -220,6 +236,11 @@ private:
      */
     void threadFunc();
 
+    /*
+    * 检查运行状态
+    */
+    bool checkRunning() const;
+
 private:
     /*
      * 线程列表
@@ -244,6 +265,15 @@ private:
     size_t initThreadSize;
 
     /*
+    * 线程的最大阈值，用于避免Cached模式下，创建过多线程导致栈溢出
+    */
+    int threadCapacity;
+
+    /*
+     * 记录当前存在的线程 
+    */
+    int currentThreadSize;
+    /*
      * CPP 对象的多态性只能通过指针或引用实现，所以想在队列中存储Task的派生对象，并通过基类指针访问它们，就必须使用指针和引用。
      * 同时在队列中存储Task对象需要消耗大量的内存，直接存储指针则可以节省内存。
      * 引用的缺点是不能重新指向。
@@ -263,7 +293,7 @@ private:
      * 到达上限时，拒绝继续提交任务
      */
     int taskCapacity;
-                                    
+                           
     /*
      * 保证任务队列的线程安全
      */
@@ -279,6 +309,16 @@ private:
      * 记录PoolMode
      */
     PoolMode poolMode;
+
+    /*
+    * 启动标识
+    */
+    bool isRunning;
+
+    /*
+    * 记录空闲线程
+    */
+    atomic_int idleThreadSize;
 };
 
 #endif
